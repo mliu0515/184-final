@@ -74,7 +74,7 @@
     <table style="width:100%">
         <tr align="center">
             <td>
-                <img src="images/image1.png" align="middle" width="400px"/>
+                <img src="images/image1.png" align="middle" width="200px"/>
                 <figcaption>CA Sand Logic
                 </figcaption>
             </td>
@@ -138,7 +138,7 @@
         <table style="width:100%">
             <tr align="center">
                 <td>
-                    <img src="images/image4.png" align="middle" width="400px"/>
+                    <img src="images/image4.png" align="middle" width="300px"/>
                     <figcaption>CA simulation for fire
                     </figcaption>
                 </td>
@@ -265,7 +265,29 @@
     </p>
 
     <br>
+    <h2 align="middle">Performance & Benchmarking</h2>
+    <p>We added our own debugging and benchmarking structures for time and latency measurement, which can be accessed with convenience macros like `PROFILE_SCOPE(“myscope”)` and `PROFILE_FUNCTION()`, `BREAKPOINT()` etc. We profiled in Debug, RelWithDebug, and Release mode to find bottlenecks and mitigate them.</p>
+    <p>We used CMAKE xcode generator to generate xcode project files, which can be used for analysis and instrumented profiling by recording program execution with minimal overhead.
+    </p>
+    <p>On the CPU Side, the biggest bottleneck is `grid.type_at(x, y)` which reads a cell from the 2D grid of cells, and returns its type. This is where 53% of our time is spent, waiting for data to load in. We brought this time down from ~70% by using aligned and packed structs. We maintain >100 fps for resolutions up to 1080p, beyond which we start noticing a performance cliff. This is why we implemented a GPU backend as well.
+    </p>
+    <p>On the GPU Side, the biggest bottleneck is `glfwSwapBuffers` call which takes ~55% of total time. Even when operating on big world sizes: eg: at 8M cells (4K resolution), we are able to simulate a full scene and compute the next frame, even before the display is ready to receive the next frame after displaying it (resolutions up to 4k all run pretty much >200 fps all the time, we did not test it further, but the profiling data is encouraging and points we have more bandwidth & capacity to exploit with the current implementation).
+    </p>
+    <br>
+    <h2 align="middle"> Tooling</h2>
+    <p>We implemented all code from scratch including our CMAKE configs. We utilized modern best practices with C++ 20 (CRTP, Lambdas, Perfect Forwarding, Rule of 5, Rule of 3, extensive operator overloading, smart pointers etc.), had strict conventions on code style, static analysis using llvm-clangd and llvm-clangtidy, used addressed sanitizer to check for memory leaks, codebase is const-correct, llvm-clang-format for formatting, google-benchmark for benchmarking, glm with SIMD enabled for CPU side math.
+    </p>
+    <p>We have ~5k LoC (excluding header files, libraries, CMake scripts, config files).</p>
+    <ul>
+        <li>~3.2k for Application, Window, Loader, utils, and CPU Grid/Cell code.
+        </li>
+        <li>~1.2k for Shaders (OpenCL Compute, OpenGL vertex, OpenGL fragment)
+        </li>
+    </ul>
+    <br>
     <h2 align="middle"> Problems Encountered and Lessons Learned</h2>
+
+    <br>
 
     <h3>1. Lagging Support for Velocity Attribute</h3>
     <p>Problem: Initially, a pixel could only move 1 pixel max, in 1 sim step, but this made water appear very viscous, almost like honey.</p>
@@ -296,6 +318,12 @@
     </p>
     <p>Solution: We created a pseudorandom number generator (PRNG) based on an initial seed matrix of random numbers, row/col number, mass and hashing.
     </p>
+    <ul>
+        <li>Initial attempt was to use (row, col, mass) as a seed, but this was not unique enough because of correlation of nearby cells
+        </li>
+        <li>We ended up using the sophisticated PRNG setup elaborated above. This results in much better visuals and finer grained control over behaviors.
+        </li>
+    </ul>
 
     <br>
     <h2 align="middle">Rationale
