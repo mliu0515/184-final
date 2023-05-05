@@ -22,8 +22,9 @@
 <h1 align="middle">Team Member Names</h1>
 <h1 align="middle"><a href='https://mliu0515.github.io/184-final/'>(Webpage URL)</a></h1>
 
-<div class="padded">
 
+<div class="padded">
+    <br>
 
     <h2 align="middle">Abstract</h2>
     <p>
@@ -51,6 +52,9 @@
     <p>
         We render our scene by treating it as a 2D grid divided into cells, where each cell can contain one of the following cell types: ait, smoke, fire, water, oil, sand, and stone. We also added a way to easily access the 8 surrounding cells of a given cell by calling get_cell_context() function. Furthermore, we created an object for each of the cell types, and at each time step, we iterated through every single cell in the grid, and called the step() function associated with its type to update the grid state in the next time step. In this section we are going to provide details about the rules in the step() function of each material, and go over the technical aspect of our renderer.
     </p>
+
+    <br>
+
     <h3 align="middle">Step() Functions for Materials
     </h3>
 
@@ -85,12 +89,12 @@
     <table style="width:100%">
         <tr align="center">
             <td>
-                <img src="images/image2.png" align="middle" width="500px"/>
+                <img src="images/image2.png" align="middle" width="400px"/>
                 <figcaption>Water is able to form a pond on the right
                 </figcaption>
             </td>
             <td>
-                <img src="images/image3.png" align="middle" width="500px"/>
+                <img src="images/image3.png" align="middle" width="400px"/>
                 <figcaption>Water is able to trickle down
                 </figcaption>
             </td>
@@ -199,8 +203,163 @@
     </div>
     <br>
 
-    <h3 align="middle">Renderer</h3>
+    <h3 align="middle">Simulation Engine</h3>
+    <table style="width:100%">
+        <tr align="center">
+            <td>
+                <img src="images/image14.png" align="middle" width="500px"/>
+                <figcaption>Simulation flowchart
+                </figcaption>
+            </td>
+        </tr>
+    </table>
 
+    <h4 align="middle">Design</h4>
+    <p>We have backend agnostics Base Class for Grid Types, which are responsible for storing and maintaining the simulation state, serialization to file and deserialization from file, and provide api to update state using mouse input and direct function calls. </p>
+
+    <p>Our OpenGL (glad, glfw, gl), OpenCL(c) and OpenMP(c++) code are secluded into individual files, which include guards to configure the backend based on compile flags and available support.</p>
+
+    <h4 align="middle">CPU Implementation</h4>
+    <p>GridCell:</p>
+    <ol>
+        <li>CA-cell, contains attributes: TypeID, Mass, 2D-Velocity, Updated bit.</li>
+        <li>packed & aligned to 16 Bytes, for better cache performance and latencies.</li>
+        <li>particular materials are subclasses (C++ CRTP to avoid V-table overhead) with diff step functions and properties.</li>
+    </ol>
+    <p>Grid:</p>
+    <ol>
+        <li>representation of the world, 2D array of GridCells. Runs the simulation and passes render info to the renderer.</li>
+        <li>uses double buffering: read state from last grid to compute new grid. Swap pointers after simulation complete</li>
+        <li>copies data into glTexture: encode [cell type, mass] into float value slots of texture, passed to fragment shader.</li>
+        <li>utilizes OpenMP to parallelize the main hot loop iterating over cells. Splits the 2D loop into rows to be processed by different threads from a thread pool (retain threads to avoid creation / destruction overheads). Double buffering helps as no race-condition for reading in reading the last state
+        </li>
+    </ol>
+    <h4 align="middle">GPU Implementation</h4>
+    <p>DeviceCell:</p>
+    <ol>
+        <li>CA-cell, contains attributes: TypeID, Mass, 2D-Velocity, Updated bit</li>
+        <li>16 Byte packed, aligned struct in gpu memory</li>
+        <li>Particular materials are processed by their own step functions, depending on type being processed by a given kernel thread.</li>
+    </ol>
+    <p>DeviceGrid:</p>
+    <ol>
+        <li>Class for initializing, and maintaining OpenCL state.</li>
+        <li>Launches GPU kernels by enqueueing them into in-order completion OpenCL Command Queue</li>
+        <li>We only wait for GPU kernels to finish at the last moment, and queue up as much work as possible before the need to synchronize comes up again.
+        </li>
+        <li>Has API to set a target OpenGL texture bind, which will be acquired (just access, not copy) before render kernel call, which will write the image by encoding grid cell attributes into floats. Current implementation supports passing 4 floating point values, only 2 of which are used [typeid, mass] as of yet.
+        </li>
+    </ol>
+    <h4 align="middle">GPU Compute Kernels:</h4>
+    <p>Individual kernels implemented for initialization of grid (defaults to AIR filled grid), random-initialization (for testing / debugging / demo), simulation step, fluid step (second pass helpful for fluids which needs the updated state, to further modify the updated state. executed after simulation step kernel completes), render (encode grid into cl_image, which is connected internally to a glTexture2D), and spawn cells (handle mouse input for spawning and erasing cells).
+    </p>
+    <p>Data is never directly read nor modified from CPU side, all manipulations to cl_mem buffers storing the grid cells are done on GPU using double buffering.
+    </p>
+    <p>We just swap the kernel arguments before launch, depending on which grid to use as previous-state, and which for target updated state.
+    </p>
+    <p>Code involves heavy use of macros for automatic struct, callbacks and function declarations / definitions (inspiration taken from PyTorch codebase), inline function calls and minimized branching.
+    </p>
+    <p>We added Pseudo Random Number Generation (not supported in any capacity by OpenCL), to make our behaviors more stochastic. This was done by initializing a buffer of random seeds (from C++ stdlib generators) in the GPU, when DeviceGrid is created. Then our random number functions within the OpenCL program, accessed using simple macros, will read in the current cell (row, col) seed, update the seed using Java-Random algorithm (we have support for XOR shift, Mersenne Twister as well), and give a random number. This way, each kernel thread can have its own string of random numbers over time.
+    </p>
+    <p>We implemented random floating point values, and values between ranges for both integers and floats using this base algorithm. This means we have a one time initialization cost, and get cheap pseudo random number generation.
+    </p>
+
+    <br>
+    <h2 align="middle"> Problems Encountered and Lessons Learned</h2>
+
+    <h3>1. Lagging Support for Velocity Attribute</h3>
+    <p>Problem: Initially, a pixel could only move 1 pixel max, in 1 sim step, but this made water appear very viscous, almost like honey.</p>
+    <p>
+        Solution: We added a parameter horizontal_reach to allow liquids to spread across n horizontal neighbors in a single time step.
+    </p>
+
+    <h3>2. Race Conditions</h3>
+    <p>no particular order of cell processing on GPU  / Multithreaded CPU, leads to loss of mass / particles due to concurrent overwrites into the next state being computed
+    </p>
+    <p>We initially wanted to maintain the invariance that a grid cell can read previous state from the entire grid, but cannot update the next state for any other cell indices, ie. a cell can only update itself depending on its neighbors.
+    </p>
+    <p>We quickly ran into issues with this restriction, when implementing water which has multiple directions of flow of mass, and a single water cell can be filled in by multiple neighboring water cells.
+    </p>
+    <p>On CPU we decided to deal with this by splitting workgroups into rows, as this was the most prominent access pattern (achieved by our water logic)
+    </p>
+    <p>On GPU we decided to deal with this by splitting work groups into chunks of 10x10, within which we tolerate race-conditions and compensate for the lost mass and particles. Towards the deadline, we added another Simulation Pass just for fluids, who need to read the updated state, to update the state further (eg: water needs to know where water is right now, to handle its flow edge cases), but were not able to adapt our fluids to take advantage of this in time.</p>
+
+    <h3>3. Oil - Water Interaction
+    </h3>
+    <p>Problem: an oil cell found below a water cell should swap places, but we always ran into undefined behavior because the oil-water swap would face a race condition with regular oil/water flow.</p>
+    <p>Solution: we decided to implement another GPU grid pass just for vertically swapping fluids of different densities so it wouldn’t conflict with regular flow.
+    </p>
+
+    <h3>4. GPU PRNG issues
+    </h3>
+    <p>Problem: OpenCL doesn’t have a random number generator, but we needed one to model behavior like sand spread, flame/smoke rise and sand erosion.
+    </p>
+    <p>Solution: We created a pseudorandom number generator (PRNG) based on an initial seed matrix of random numbers, row/col number, mass and hashing.
+    </p>
+
+    <br>
+    <h2 align="middle">Rationale
+    </h2>
+    <h4>Q. Why Choose OpenGL 3.3, instead of a more modern version?
+    </h4>
+    <p>Apple deprecated support for OpenGL on MacOs in favor of Metal.
+        We desired a cross platform software,
+        so we had to stick with the OpenGL version we had available on all our devices (MacBooks).
+        We avoided Metal due to its specificity to MacOS, and Vulkan was not chosen for this project, we required a very basic renderer and the verbosity of Vulkan is not justified for our scale of application. Furthermore, we are happy with single threaded render loops, and so did not require any of the additional capabilities offered by the other APIs.</p>
+
+    <h4>Q. What was the need for GPU accelerated simulation, despite also having a CPU Multi Threaded Version?</h4>
+    <p>We wanted to implement an engine for CA simulation, with vast capabilities in terms of Number Of Cells being simulated with High FPs. We hit a point on the CPU Version where the memory access latency for just reading and writing to our internal grid representation (despite using Packed Aligned Structs optimized for Cache), was the biggest bottleneck of the program. We decided to add a GPU implementation after realizing the performance roof of the CPU version, as well as profiling the program to not be fully utilizing the GPU resources already available.
+    </p>
+
+    <h4>Q. Why Use OpenCL at all? Why not do simulation logic in Fragment shader, which is a standard Approach?</h4>
+    <p>
+        OpenGL 3.3 doesn’t support glBuffers, and even writable-textures. Initially we were using vertex attributes to pass in the relevant data for rendering. We hit a ceiling because of the limited number & sizes of these, conflicting with our desire to support more attributes than just Mass (velocity, updated bit etc). We figured out a way to pass more data in using non-writable Textures instead (16Kx16K limit), but the lack of glBuffers, writable buffers/textures, and lack of any support for Compute Shaders lead us to pivot our simulation engine to OpenCL.
+    </p>
+    <p>
+        We implemented all our materials in OpenCL kernels, and optimized the OpenCL - OpenGL interop in a cross-platform manner such that the CA Grids internal representation is allocated and stored completely in GPU memory, and a special OpenCL kernel can render our grid into a glTexture / Image directly by using the gl resource pointer. This means no copies are made even within GPU memory, no data is copied into CPU, and these GPU buffers can be HOST_READ_ONLY for better performance. All the CPU does in our latest implementation is launch the async OpenCL simulation and render kernels, and then complete a render pass using OpenGL where the target texture is already filled in. Our main render loop is just 1 line of code, drawing our screen size quad, with our computed texture.
+    </p>
+    <br>
+
+    <h2 align="middle">Results
+    </h2>
+
+    <table style="width:100%">
+
+        <tr align="center">
+            <td>
+                <img src="images/image12.png" align="middle" width="400px"/>
+                <figcaption>Oil and water erode sand and accumulate in vessels, but oil always moves above water.
+                </figcaption>
+            </td>
+            <td>
+                <img src="images/image11.png" align="middle" width="400px"/>
+                <figcaption>Pixel chaos
+                </figcaption>
+            </td>
+            <td>
+                <img src="images/image13.png" align="middle" width="400px"/>
+                <figcaption>Pixel chaos
+                </figcaption>
+            </td>
+        </tr>
+
+    </table>
+
+    <br>
+    <h2 align="middle">References
+    </h2>
+    <p align="middle"><a href='https://w-shadow.com/blog/2009/09/01/simple-fluid-simulation/'>Simple Fluid Sim
+    </a></p>
+    <p align="middle"><a href='https://mikeash.com/pyblog/fluid-simulation-for-dummies.html'>Fluid Sim using CA
+    </a></p>
+    <p align="middle"><a href='https://www.youtube.com/watch?v=VLZjd_Y1gJ8'>Study on Sand Simulation in Noita
+    </a></p>
+    <p align="middle"><a href='https://blog.macuyiko.com/post/2020/an-exploration-of-cellular-automata-and-graph-based-game-systems-part-4.html'>An Exploration of Cellular Automata and Graph Based Game Systems
+    </a></p>
+    <p align="middle"><a href='https://github.com/LelsersLasers/3D-Cellular-Automata-Raylib'>CODE: 3D CA
+    </a></p>
+    <p align="middle"><a href='https://github.com/DavidMcLaughlin208/FallingSandJava/graphs/contributors'>CODE: Falling Sand Sim
+    </a></p>
 
 </div>
 </body>
