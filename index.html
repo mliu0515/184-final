@@ -1,0 +1,208 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head>
+    <style>
+        div.padded {
+            padding-top: 0px;
+            padding-right: 100px;
+            padding-bottom: 0.25in;
+            padding-left: 100px;
+        }
+        body {
+            background-color: rgb(206, 220, 190);
+        }
+    </style>
+    <title>Simulake Final Deliverable | CS 184</title>
+    <meta http-equiv="content-type" content="text/html; charset=utf-8" />
+    <link rel="stylesheet" type="text/css" href="style.css" media="screen" />
+</head>
+<body>
+<br />
+<h1 align="middle">Simulake</h1>
+<h1 align="middle">Team Member Names</h1>
+<h1 align="middle">(Webpage URL)</h1>
+
+<div class="padded">
+
+
+    <h2 align="middle">Abstract</h2>
+    <p>
+        Cellular Automata (CA) are discrete mathematical models that consist of a grid of cells, where each cell has a finite number of possible states. The states of the cells change over time based on a set of rules that define how the state of a cell is affected by its neighboring cells. Due to its simplicity, CA is used by many computer graphic designers as an alternative to achieve aesthetically appealing simulation of fluids and other physical materials, and to model the complex interactions between materials of varying physical properties. Our project group embarked on the challenge of implementing the CA logic of various materials such as sand, water, and fire, and created scenes where multiple materials interact with each other. Furthermore, we took an extra step and implemented our own renderer that supports both cpu and gpu renderings with significant speedup.
+    </p>
+    <div align="middle">
+        <table style="width:100%">
+            <tr align="center">
+                <td>
+                    <img src="images/image7.png" align="middle" width="400px"/>
+                    <figcaption>Pictured - our objective.
+                        Source: An Exploration of Cellular Automata and Graph Based Game Systems
+                    </figcaption>
+                </td>
+            </tr>
+
+        </table>
+    </div>
+
+    <br>
+
+    <h2 align="middle">Technical Approach
+    </h2>
+
+    <p>
+        We render our scene by treating it as a 2D grid divided into cells, where each cell can contain one of the following cell types: ait, smoke, fire, water, oil, sand, and stone. We also added a way to easily access the 8 surrounding cells of a given cell by calling get_cell_context() function. Furthermore, we created an object for each of the cell types, and at each time step, we iterated through every single cell in the grid, and called the step() function associated with its type to update the grid state in the next time step. In this section we are going to provide details about the rules in the step() function of each material, and go over the technical aspect of our renderer.
+    </p>
+    <h3 align="middle">Step() Functions for Materials
+    </h3>
+
+    <h4 align="middle">Sand
+    </h4>
+    <p>
+        To simulate falling sand and sand piles, we took inspiration from [source] and implemented the CA rules for sand as follows:
+    </p>
+    <ol>
+        <li>If the current cell is sand, and the cell right below it is of a fluid type (i.e. air, smoke, fire, water, oil), change the bottom cell into the sand type, and change the type of the current cell into that of the bottom cell.
+        </li>
+        <li>Else, we check the bottom left cell, and if it is a fluid, repeat the action of the previous step.</li>
+        <li>Else, we check the bottom right and update the cell using the same logic accordingly.
+        </li>
+        <li>If none of the cells below the current cell is fluid, it means the sand particle is stuck, therefore we don’t do anything to the state of the cell.  </li>
+    </ol>
+    <table style="width:100%">
+        <tr align="center">
+            <td>
+                <img src="images/image1.png" align="middle" width="400px"/>
+                <figcaption>CA Sand Logic
+                </figcaption>
+            </td>
+        </tr>
+    </table>
+
+    <h4 align="middle">Water
+    </h4>
+    <p>
+        The rules for the behavior of water cells is similar to sand in that it also includes a vertically down flow due to gravity. Yet different from sand, it also includes horizontal equalization with neighboring cells and a slight diagonal flow, thereby having a wider range of motion. The mass of each cell is also taken into account, where a water cell at a lower location has a slightly heavier mass than the water cell at the top. Using the mass property, we were able to simulate water compression, which occurs when the mass exceeds a certain limit, leading to the water flow back upward. These rules can be used to simulate the behavior of water in different conditions and can provide insights into fluid dynamics.
+    </p>
+    <table style="width:100%">
+        <tr align="center">
+            <td>
+                <img src="images/image2.png" align="middle" width="500px"/>
+                <figcaption>Water is able to form a pond on the right
+                </figcaption>
+            </td>
+            <td>
+                <img src="images/image3.png" align="middle" width="500px"/>
+                <figcaption>Water is able to trickle down
+                </figcaption>
+            </td>
+        </tr>
+    </table>
+
+    <h4 align="middle">Oil
+    </h4>
+    <p>
+        Oil is very similar to water, except that we added a property where it will always flow above water when it comes in contact with water cells.
+    </p>
+    <div align="middle">
+        <table style="width:100%">
+            <tr align="center">
+                <td>
+                    <img src="images/image9.png" align="middle" width="400px"/>
+                    <figcaption>Oil ALWAYS flows on top of water
+                    </figcaption>
+                </td>
+            </tr>
+
+        </table>
+    </div>
+
+    <h4 align="middle">Smoke and Fire
+    </h4>
+    <p>
+        Smoke and fire should be talked about together, because smoke is usually a byproduct of fire interacting with flammable materials. For a fire cell, we look at all of its 8 neighboring cells, and update them using the following logic:
+    </p>
+    <ol>
+        <li>If the neighboring cell is flammable (the flammable cell types in our project’s definition is sand and oil), change this neighboring cell’s type into fire.
+        </li>
+        <li>Else, if the neighboring cell is air, it means the fire has lit up but cannot be propagated into the neighboring cell, therefore with probability p, this neighboring cell will turn into smoke, and 1 - p probability of remaining being ari.
+        </li>
+        <li>If the neighboring cell is water, we want to generate steam. And since steam and water share similar properties, we categorized them all under the smoke type. For water instead of having a probability p, we want to convert all the water cells that came in contact with fire into smoke.
+        </li>
+    </ol>
+    <p>Additionally, the fire cell also has a probability of directly turning into an air cell, indicating that the fire has died down.
+    </p>
+    <div align="middle">
+        <table style="width:100%">
+            <tr align="center">
+                <td>
+                    <img src="images/image4.png" align="middle" width="400px"/>
+                    <figcaption>CA simulation for fire
+                    </figcaption>
+                </td>
+            </tr>
+
+        </table>
+    </div>
+
+    <h4 align="middle">Jet Fuel
+    </h4>
+    <p>
+        In our CA simulation, jet fuel is represented as a type of material that can collide with and flow around other solid objects as well as objects of the same material as itself. The behavior of the fuel is influenced by its surroundings, with a probability of combustion increasing depending on the presence of combustible materials. Once ignited, the fuel will continue to combust on oil, but can be extinguished by water.
+    </p>
+    <div align="middle">
+        <table style="width:100%">
+            <tr align="center">
+                <td>
+                    <img src="images/image6.png" align="middle" width="400px"/>
+                    <figcaption>CA simulation for jet fuel
+                    </figcaption>
+                </td>
+            </tr>
+
+        </table>
+    </div>
+
+    <h4 align="middle">Ghost Fire
+    </h4>
+    <p>
+        The CA logic for simulating ghost fire involves two key rules. First, the fire is similar logic to our earlier implementation of jet fuel,
+        but it burns eternally without the need for additional fuel (thereby it's called ghost fire). Second, the fire destroys sand cells when it comes into contact with them, but can be extinguished by water cells.
+    </p>
+    <div align="middle">
+        <table style="width:100%">
+            <tr align="center">
+                <td>
+                    <img src="images/image10.png" align="middle" width="400px"/>
+                    <figcaption>CA simulation for ghost fire.
+                    </figcaption>
+                </td>
+            </tr>
+
+        </table>
+    </div>
+
+    <h4 align="middle">Stone
+    </h4>
+    <p>
+        Stones are represented as static solid materials that are neither affected by other materials nor any laws of physics. In other words, they exist as immovable objects in the simulation, with no interactions or reactions with their surroundings. This simple model can be useful for creating simulations of static environments, such as landscapes or geological formations, where the behavior of stones does not change over time.
+    </p>
+    <div align="middle">
+        <table style="width:100%">
+            <tr align="center">
+                <td>
+                    <img src="images/image8.png" align="middle" width="400px"/>
+                    <figcaption>CA simulation for stone
+                    </figcaption>
+                </td>
+            </tr>
+
+        </table>
+    </div>
+    <br>
+
+    <h3 align="middle">Renderer</h3>
+
+
+</div>
+</body>
+</html>
+
